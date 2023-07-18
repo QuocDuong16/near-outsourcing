@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
+use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, Balance, PanicOnDefault, Promise};
 
@@ -15,7 +15,6 @@ pub struct Contract {
   user_data: UnorderedMap<AccountId, User>,
   client_data: UnorderedMap<AccountId, Client>,
   jobs_per_client: UnorderedMap<AccountId, Vec<Job>>,
-  pending_payments: LookupMap<AccountId, Balance>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize)]
@@ -43,7 +42,7 @@ pub struct Job {
   freelancer: Option<AccountId>,
 }
 
-// Outsourcing or E-Commerce
+// Outsourcing
 pub trait ImplementOutsourcing {
   fn create_user(&mut self, user_name: Option<String>, user_address: Option<String>);
   fn take_job(&mut self, job_id: JobId);
@@ -53,20 +52,11 @@ pub trait ImplementOutsourcing {
   fn view_all_jobs_per_client(&self, client_id: AccountId) -> Option<Vec<Job>>;
   fn view_all_jobs(&self) -> Vec<Job>;
   fn payment(&mut self, job_id: JobId) -> Promise; // Payment -> Jobs will remove from list
-
-  // thêm để xem
   fn get_all_users(&self) -> Vec<User>;
   fn get_all_clients(&self) -> Vec<Client>;
-}
-
-// -> Thứ 3 tuần sau
-pub trait ImplementECommerce {
-  fn create_shop();
-  fn create_product();
-  fn view_all_products();
-  fn view_all_products_per_shop();
-  fn view_product_by_id();
-  fn payment(); // Payment -> Product decrement total_supply;
+  fn update_user(&mut self, user_name: Option<String>, user_address: Option<String>);
+  fn update_client(&mut self, client_name: Option<String>, client_address: Option<String>);
+  fn update_job(&mut self, job_id: JobId, salary: Balance);
 }
 
 // Implement the contract structure
@@ -80,7 +70,6 @@ impl Contract {
       user_data: UnorderedMap::new(b"user_data".to_vec()),
       client_data: UnorderedMap::new(b"client_data".to_vec()),
       jobs_per_client: UnorderedMap::new(b"jobs_per_client".to_vec()),
-      pending_payments: LookupMap::new(b"pending_payments".to_vec()),
     }
   }
 }
@@ -93,6 +82,19 @@ impl ImplementOutsourcing for Contract {
     self.users.insert(&user_id);
     let user_data = User { user_id: user_id.clone(), user_name, user_address };
     self.user_data.insert(&user_id, &user_data);
+  }
+
+  fn update_user(&mut self, user_name: Option<String>, user_address: Option<String>) {
+    let user_id = env::signer_account_id();
+    assert!(self.users.contains(&user_id), "You are not a User");
+    let mut user = self.user_data.get(&user_id).unwrap();
+    if let Some(name) = user_name {
+      user.user_name = Some(name);
+    }
+    if let Some(address) = user_address {
+      user.user_address = Some(address);
+    }
+    self.user_data.insert(&user_id, &user);
   }
 
   fn get_all_users(&self) -> Vec<User> {
@@ -143,6 +145,19 @@ impl ImplementOutsourcing for Contract {
     all_clients
   }
 
+  fn update_client(&mut self, client_name: Option<String>, client_address: Option<String>) {
+    let client_id = env::signer_account_id();
+    assert!(self.clients.contains(&client_id), "You are not a Client");
+    let mut client = self.client_data.get(&client_id).unwrap();
+    if let Some(name) = client_name {
+        client.client_name = Some(name);
+    }
+    if let Some(address) = client_address {
+        client.client_address = Some(address);
+    }
+    self.client_data.insert(&client_id, &client);
+}
+
   fn create_job(&mut self, job_id: JobId, salary: Balance) {
     let client_id = env::signer_account_id();
     assert!(self.clients.contains(&client_id), "You are not a Client");
@@ -156,6 +171,25 @@ impl ImplementOutsourcing for Contract {
         let mut client_jobs = self.jobs_per_client.get(&client_id).unwrap_or_default();
         client_jobs.push(job);
         self.jobs_per_client.insert(&client_id, &client_jobs);
+      },
+    }
+  }
+
+  fn update_job(&mut self, job_id: JobId, salary: Balance) {
+    let client_id = env::signer_account_id();
+    assert!(self.clients.contains(&client_id), "You are not a Client");
+    let job_option = self.view_job_by_id(job_id.clone());
+    match job_option {
+      Some(mut job) => {
+        assert_eq!(job.client_id, client_id, "You are not the owner of this job");
+        job.salary = salary;
+        let mut client_jobs = self.jobs_per_client.get(&client_id).unwrap_or_default();
+        let job_index = client_jobs.iter().position(|j| j.job_id == job_id).unwrap();
+        client_jobs[job_index] = job;
+        self.jobs_per_client.insert(&client_id, &client_jobs);
+      },
+      None => {
+        panic!("Job not found");
       },
     }
   }
